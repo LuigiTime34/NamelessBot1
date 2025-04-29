@@ -1,3 +1,5 @@
+# roles.py
+
 import discord
 import asyncio
 from const import (
@@ -12,6 +14,10 @@ import logging
 # Setup logger
 logger = logging.getLogger('nameless_bot')
 
+# --- Define the delay between role updates in seconds ---
+# Start with 1.0 second, adjust if needed (0.5 might work, 1.5 if still hitting limits)
+ROLE_API_CALL_DELAY = 1.0
+
 async def add_online_role(member):
     """Add the online role to a Discord member."""
     if not member: return # Guard clause
@@ -20,6 +26,8 @@ async def add_online_role(member):
         if role and role not in member.roles:
             await member.add_roles(role, reason="Player logged into Minecraft server")
             logger.info(f"Added {ONLINE_ROLE_NAME} role to {member.display_name} ({member.id})")
+            # Optional: Add a small delay even here if join/leaves are very rapid
+            # await asyncio.sleep(0.2)
     except discord.HTTPException as e:
          logger.error(f"Failed to add online role to {member.display_name}: {e}")
 
@@ -31,36 +39,40 @@ async def remove_online_role(member):
         if role and role in member.roles:
             await member.remove_roles(role, reason="Player logged out of Minecraft server")
             logger.info(f"Removed {ONLINE_ROLE_NAME} role from {member.display_name} ({member.id})")
+            # Optional: Add a small delay even here if join/leaves are very rapid
+            # await asyncio.sleep(0.2)
     except discord.HTTPException as e:
         logger.error(f"Failed to remove online role from {member.display_name}: {e}")
 
 
 async def clear_all_online_roles(guild):
-    """Remove online role from all members in the guild."""
+    """Remove online role from all members in the guild sequentially."""
     if not guild: return
     role = discord.utils.get(guild.roles, name=ONLINE_ROLE_NAME)
     if role:
         members_with_role = [member for member in guild.members if role in member.roles]
         cleared_count = 0
+        if members_with_role:
+             logger.info(f"Clearing {ONLINE_ROLE_NAME} role from {len(members_with_role)} members in guild {guild.name}...")
         for member in members_with_role:
             try:
                 await member.remove_roles(role, reason="Server stopped / Bot clearing roles")
                 cleared_count += 1
+                # --- Add delay after each removal ---
+                await asyncio.sleep(ROLE_API_CALL_DELAY / 2) # Use half delay for clearing if desired
             except discord.HTTPException as e:
                  logger.warning(f"Failed to remove online role from {member.display_name} during clear: {e}")
         if cleared_count > 0:
-            logger.info(f"Cleared {ONLINE_ROLE_NAME} role from {cleared_count} members in guild {guild.name}")
-        # else: # Optional: reduce log spam
-        #     logger.debug(f"No members had the {ONLINE_ROLE_NAME} role to clear in guild {guild.name}")
+            logger.info(f"Finished clearing {ONLINE_ROLE_NAME} role from {cleared_count} members.")
 
 
 async def update_achievement_roles(bot, guild):
-    """Update all achievement roles based on current stats."""
+    """Update all achievement roles based on current stats sequentially."""
     if not guild:
         logger.warning("update_achievement_roles called without a valid guild.")
         return
 
-    logger.info(f"Updating achievement roles in guild {guild.name}...")
+    logger.info(f"Starting sequential achievement role update in guild {guild.name}...")
 
     # --- Get Data ---
     try:
@@ -90,19 +102,25 @@ async def update_achievement_roles(bot, guild):
         logger.warning(f"Missing achievement roles in guild {guild.name}: {', '.join(missing_roles)}")
 
     # --- Determine New Role Holders ---
-    new_holders = {role: set() for role in roles.values()} # Map Role Object -> Set[Member Object]
+    new_holders = {role: set() for role in roles.values() if role} # Map Role Object -> Set[Member Object]
 
     # Helper to add player to role set if member found
     async def add_holder(role_key, player_data):
-        if roles.get(role_key) and player_data:
+        role = roles.get(role_key)
+        if role and player_data:
             mc_username, discord_identifier, _ = player_data[:3] # Use first 3 elements
-            # Try fetching by DB discord_username first
             member = get_discord_user(bot, discord_identifier, guild) # Pass guild context
             if member:
-                new_holders[roles[role_key]].add(member)
+                # Make sure the role object actually exists in the dictionary before adding
+                if role in new_holders:
+                    new_holders[role].add(member)
+                else:
+                     logger.warning(f"Role object for key '{role_key}' not found in new_holders dict, cannot assign member.")
             else:
-                logger.debug(f"Could not find Discord member for {mc_username} ({discord_identifier}) for role {roles[role_key].name}")
+                logger.debug(f"Could not find Discord member for {mc_username} ({discord_identifier}) for role {role.name}")
 
+    # --- Calculate who *should* have each role ---
+    # (This calculation logic remains the same as before)
 
     # Most Deaths (Skill Issue) - Top player(s) from deaths_data (sorted low->high, so take last)
     if deaths_data and 'most_deaths' in roles:
@@ -141,13 +159,12 @@ async def update_achievement_roles(bot, guild):
     if advancements_data and 'least_adv' in roles:
         min_eligible_adv = float('inf')
         eligible_players_least_adv = []
-        # We need ALL players, not just sorted list, to find minimums correctly with playtime check
         all_players_stats = get_all_players()
         for mc_name, disc_id, _, advancements, playtime in all_players_stats:
             if playtime >= 300: # 5 mins playtime
                 if advancements < min_eligible_adv:
                     min_eligible_adv = advancements
-                    eligible_players_least_adv = [(mc_name, disc_id, advancements)] # Store tuple needed by add_holder
+                    eligible_players_least_adv = [(mc_name, disc_id, advancements)]
                 elif advancements == min_eligible_adv:
                     eligible_players_least_adv.append((mc_name, disc_id, advancements))
 
@@ -167,47 +184,79 @@ async def update_achievement_roles(bot, guild):
     if playtimes_data and 'least_playtime' in roles:
         min_eligible_playtime = float('inf')
         eligible_players_least_playtime = []
-        # playtimes_data is sorted high->low, iterate backwards for efficiency maybe? Or just filter.
-        eligible_for_least = [p for p in playtimes_data if p[2] >= 300] # Filter for 5 min+
+        eligible_for_least = [p for p in playtimes_data if p[2] >= 300]
 
         if eligible_for_least:
-            min_eligible_playtime = eligible_for_least[-1][2] # Lowest playtime is last in the filtered list
+            min_eligible_playtime = eligible_for_least[-1][2]
             least_playtime_players = [p for p in eligible_for_least if p[2] == min_eligible_playtime]
             for player in least_playtime_players:
                 await add_holder('least_playtime', player)
 
-    # --- Apply Role Changes ---
-    logger.debug(f"New role holders calculated: { {r.name: {m.name for m in members} for r, members in new_holders.items()} }")
-    tasks = []
+    # --- Apply Role Changes Sequentially ---
+    logger.info(f"Applying role changes sequentially with ~{ROLE_API_CALL_DELAY}s delay...")
+    changes_applied = 0
+    rate_limit_pauses = 0
+
     for role, expected_members in new_holders.items():
-        if not role: continue # Skip if role wasn't found
+        if not role:
+            logger.warning(f"Skipping role update because role object is missing (likely wasn't found).")
+            continue
 
-        current_members = set(member for member in guild.members if role in member.roles)
+        try:
+            current_members = set(member for member in guild.members if role in member.roles)
 
-        members_to_add = expected_members - current_members
-        members_to_remove = current_members - expected_members
+            members_to_add = expected_members - current_members
+            members_to_remove = current_members - expected_members
 
-        for member in members_to_add:
-            tasks.append(member.add_roles(role, reason="Achieved criteria"))
-            logger.info(f"Queueing add {role.name} to {member.display_name}")
+            # --- Add Roles ---
+            if members_to_add:
+                 logger.debug(f"Adding role '{role.name}' to {len(members_to_add)} members...")
+            for member in members_to_add:
+                if role not in member.roles: # Double check before API call
+                    try:
+                        await member.add_roles(role, reason="Achieved criteria")
+                        logger.info(f"Added role '{role.name}' to {member.display_name}")
+                        changes_applied += 1
+                        await asyncio.sleep(ROLE_API_CALL_DELAY) # Delay AFTER successful call
+                    except discord.RateLimited:
+                         logger.warning(f"Rate limited adding role '{role.name}' to {member.display_name}. Pausing...")
+                         rate_limit_pauses += 1
+                         await asyncio.sleep(5) # Longer pause
+                         # Consider break/continue or retry logic here if needed
+                    except discord.Forbidden:
+                         logger.error(f"Permission error adding role '{role.name}' to {member.display_name}.")
+                    except discord.HTTPException as e:
+                         logger.error(f"HTTP error adding role '{role.name}' to {member.display_name}: {e}")
+                    except Exception as e:
+                         logger.exception(f"Unexpected error adding role '{role.name}' to {member.display_name}")
 
-        for member in members_to_remove:
-             tasks.append(member.remove_roles(role, reason="Lost criteria"))
-             logger.info(f"Queueing remove {role.name} from {member.display_name}")
+            # --- Remove Roles ---
+            if members_to_remove:
+                 logger.debug(f"Removing role '{role.name}' from {len(members_to_remove)} members...")
+            for member in members_to_remove:
+                if role in member.roles: # Double check before API call
+                    try:
+                        await member.remove_roles(role, reason="Lost criteria")
+                        logger.info(f"Removed role '{role.name}' from {member.display_name}")
+                        changes_applied += 1
+                        await asyncio.sleep(ROLE_API_CALL_DELAY) # Delay AFTER successful call
+                    except discord.RateLimited:
+                         logger.warning(f"Rate limited removing role '{role.name}' from {member.display_name}. Pausing...")
+                         rate_limit_pauses += 1
+                         await asyncio.sleep(5) # Longer pause
+                    except discord.Forbidden:
+                         logger.error(f"Permission error removing role '{role.name}' from {member.display_name}.")
+                    except discord.HTTPException as e:
+                         logger.error(f"HTTP error removing role '{role.name}' to {member.display_name}: {e}")
+                    except Exception as e:
+                        logger.exception(f"Unexpected error removing role '{role.name}' from {member.display_name}")
 
-    # Run all role changes concurrently
-    if tasks:
-        logger.info(f"Applying {len(tasks)} role changes...")
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                # Find the corresponding task to log which one failed
-                # This is a bit tricky as order might not be guaranteed? But likely is.
-                # A more robust way would be to wrap each coro in a function that logs on error.
-                logger.error(f"Failed to apply role change (task index {i}): {result}")
-        logger.info("Finished applying role changes.")
+        except Exception as e:
+            logger.exception(f"Error processing updates for role '{role.name}': {e}")
+
+    if changes_applied > 0:
+        logger.info(f"Finished sequential role update. Applied {changes_applied} changes.")
+        if rate_limit_pauses > 0:
+             logger.warning(f"Rate limiting was encountered {rate_limit_pauses} times during the update.")
     else:
-        logger.info("No achievement role changes needed.")
-
-
-# REMOVED role_update_task function
+        logger.info("No achievement role changes were needed in this cycle.")
