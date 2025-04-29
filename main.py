@@ -66,14 +66,6 @@ async def trigger_stat_updates(bot, guild, scoreboard_channel):
     else:
         logger.warning("Scoreboard channel not found for triggered update.")
 
-    if guild:
-        try:
-            await update_achievement_roles(bot, guild)
-        except Exception as e:
-            logger.error(f"Error during triggered role update: {e}")
-    else:
-         logger.warning("Guild not found for triggered role update.")
-
 
 # Daily stats summary task - Run at 00:05 est daily
 @tasks.loop(time=datetime.time(hour=3, minute=55, tzinfo=pytz.utc))
@@ -167,7 +159,25 @@ async def daily_stats_summary():
     except Exception as e:
         logger.error(f"Error in daily stats summary: {e}")
 
-# REMOVED before_daily_stats
+@tasks.loop(hours=1) # Update roles every hour (adjust as needed)
+async def periodic_role_update():
+    """Periodically updates achievement roles."""
+    logger.info("Running periodic role update task...")
+    # Assuming single guild for simplicity, adjust if needed
+    guild = bot.guilds[0] if bot.guilds else None
+    if guild:
+        try:
+            await update_achievement_roles(bot, guild)
+        except Exception as e:
+            logger.error(f"Error during periodic role update: {e}", exc_info=True)
+    else:
+        logger.warning("Periodic role update: Guild not found.")
+
+@periodic_role_update.before_loop
+async def before_periodic_role_update():
+    """Wait until the bot is ready before starting the loop."""
+    await bot.wait_until_ready()
+    logger.info("Periodic role update task is ready.")
 
 # Weekly stats task - Run at 00:15 est daily, but logic only executes on Sunday
 @tasks.loop(time=datetime.time(hour=0, minute=15, tzinfo=pytz.utc))
@@ -298,22 +308,22 @@ async def on_ready():
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Server is currently offline."))
 
     # Start background tasks for summaries
-    logger.info("Starting summary tasks...")
+    logger.info("Starting tasks...")
     daily_stats_summary.start()
     weekly_stats_summary.start()
+    periodic_role_update.start()
 
-    # Initial leaderboard/role update on startup
     logger.info("Performing initial leaderboard and role update...")
     scoreboard_channel = bot.get_channel(SCOREBOARD_CHANNEL_ID)
+    guild = bot.guilds[0] if bot.guilds else None # Get guild here once
+
     if scoreboard_channel:
         await update_leaderboards(bot, scoreboard_channel)
     else:
         logger.error(f"Could not find scoreboard channel {SCOREBOARD_CHANNEL_ID} for initial update.")
 
-    # Assuming single guild for simplicity, adjust if needed
-    guild = bot.guilds[0] if bot.guilds else None
     if guild:
-        await update_achievement_roles(bot, guild)
+        await update_achievement_roles(bot, guild) # Keep initial update
     else:
         logger.warning("No guilds found for initial role update.")
 
