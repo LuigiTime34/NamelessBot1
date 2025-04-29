@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+token.txt
+bear_token.txt
+henry_token.txt
+apikey.txt
+google_api_key.txt
+assistants.db
+stats.db
+*.sqlite3
+*.db
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.project
+.pydevproject
+
+# Logs
+*.log
+logs/
+
+# Local configurations
+.env
+.env.local
+config.ini
+
+# OS
+.DS_Store
+Thumbs.db
