@@ -16,7 +16,7 @@ logger = logging.getLogger('nameless_bot')
 
 # --- Define the delay between role updates in seconds ---
 # Start with 1.0 second, adjust if needed (0.5 might work, 1.5 if still hitting limits)
-ROLE_API_CALL_DELAY = 1.0
+ROLE_API_CALL_DELAY = 1.5
 
 async def add_online_role(member):
     """Add the online role to a Discord member."""
