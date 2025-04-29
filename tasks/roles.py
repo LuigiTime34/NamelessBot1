@@ -58,7 +58,7 @@ async def clear_all_online_roles(guild):
                 await member.remove_roles(role, reason="Server stopped / Bot clearing roles")
                 cleared_count += 1
                 # --- Add delay after each removal ---
-                await asyncio.sleep(ROLE_API_CALL_DELAY / 2) # Use half delay for clearing if desired
+                await asyncio.sleep(ROLE_API_CALL_DELAY)
             except discord.HTTPException as e:
                  logger.warning(f"Failed to remove online role from {member.display_name} during clear: {e}")
         if cleared_count > 0:
