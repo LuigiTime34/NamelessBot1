@@ -416,28 +416,46 @@ def delete_player(minecraft_username):
         except: pass
         return False
 
-def add_player(minecraft_username, discord_username):
-    """Add a new player to the database."""
+def add_player(minecraft_username, discord_username): # discord_username is likely "User#Tag" or ID string
+    """
+    Add a new player to the database.
+    Returns:
+        True: If player was newly added.
+        None: If player already existed (or insert was ignored).
+        False: On database error.
+    """
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Insert player into database
+        # Assuming minecraft_username is the PRIMARY KEY or has a UNIQUE constraint
         cursor.execute(
             "INSERT OR IGNORE INTO player_stats (minecraft_username, discord_username, deaths, advancements, playtime_seconds) VALUES (?, ?, 0, 0, 0)",
-            (minecraft_username, discord_username)
+            (minecraft_username, discord_username) # Use discord_username directly
         )
 
-        conn.commit()
-        conn.close()
-        logger.info(f"Added player {minecraft_username} ({discord_username}) to database")
-        return True
+        if cursor.rowcount > 0: # A row was actually inserted
+            conn.commit()
+            logger.info(f"NEWLY ADDED player {minecraft_username} (Discord: {discord_username}) to database")
+            return True
+        else:
+            # No rows affected, means player likely already existed due to OR IGNORE
+            conn.commit() # Commit in case other (unrelated) operations happened
+            logger.info(f"Player {minecraft_username} (Discord: {discord_username}) already exists or insert was ignored.")
+            return None
     except Exception as e:
-        logger.error(f"Error adding player {minecraft_username}: {e}")
-        try: conn.close()
-        except: pass
+        logger.error(f"Error in add_player for MC: {minecraft_username}, Discord: {discord_username}: {e}", exc_info=True)
+        if conn: # Attempt to rollback if there was an error mid-transaction
+            try:
+                conn.rollback()
+            except Exception as rb_err:
+                logger.error(f"Error during rollback for {minecraft_username}: {rb_err}")
         return False
-
+    finally:
+        if conn:
+            conn.close()
+            
 def save_daily_stats():
     """Ensure an entry exists for today in stats_history for all known players.
        Called by the daily summary task before processing yesterday.

@@ -1,6 +1,6 @@
 import discord
 import asyncio
-from const import MOD_ROLE_ID, MINECRAFT_TO_DISCORD
+from const import MOD_ROLE_ID, WHITELIST_ROLE_ID
 from database.queries import get_all_players, bulk_update_history, delete_player, add_player, get_player_stats
 from utils.discord_helpers import get_discord_user
 from tasks.roles import update_achievement_roles
@@ -227,42 +227,103 @@ username2: deaths=2, advancements=15, playtime=7200
     except asyncio.TimeoutError:
         await ctx.send("Timed out waiting for response.")
 
-async def whitelist_command(ctx, bot, discord_user=None, minecraft_user=None):
-    """Whitelist a player by adding them to the database and giving them the whitelist role."""
-    # Check if user has mod role
+async def whitelist_command(ctx, bot, discord_user_str: str = None, minecraft_user: str = None):
+    """
+    Whitelist a player by adding/verifying them in the database
+    and ensuring they have the whitelist role.
+
+    Usage: !whitelist <DiscordUserMentionOrIDOrName#Tag> <MinecraftUsername>
+    """
+    # 1. Check if user has mod role
     if not any(role.id == MOD_ROLE_ID for role in ctx.author.roles):
         await ctx.send("You don't have permission to use this command.")
         return
-    
-    # Check for required parameters
-    if not discord_user or not minecraft_user:
-        await ctx.send("Both Discord user and Minecraft username are required. Format: !whitelist DISCORD_USER MINECRAFT_USER")
+
+    # 2. Check for required parameters
+    if not discord_user_str or not minecraft_user:
+        await ctx.send("Both Discord user and Minecraft username are required.\n"
+                       "Format: `!whitelist <DiscordUser> <MinecraftUsername>`")
         return
-    
-    await ctx.message.add_reaction('✅')
-    
-    # Find the Discord user
-    member = get_discord_user(bot, discord_user)
-    
+
+    await ctx.message.add_reaction('⏳') # Processing reaction
+
+    # 3. Find the Discord user
+    member = get_discord_user(bot, discord_user_str) # Tries to find based on mention, ID, Name#Tag
+
     if not member:
-        await ctx.send(f"Could not find Discord user {discord_user}")
+        await ctx.message.remove_reaction('⏳', bot.user)
+        await ctx.message.add_reaction('❌')
+        await ctx.send(f"Could not find Discord user: `{discord_user_str}`")
         return
-    
-    # Add player to database
-    success = add_player(minecraft_user, discord_user)
-    
-    if not success:
-        await ctx.send(f"Error adding player {minecraft_user} to database.")
+
+    # 4. Add/Verify player in the database
+    # Assuming add_player now returns True (newly added), None (already existed), False (error)
+    # And it takes the string discord_user_str (e.g. "User#1234") or member.id if preferred by add_player
+    # The original snippet used 'discord_user' (the string from command) for add_player.
+    db_result = add_player(minecraft_username=minecraft_user, discord_username=str(member)) # Use str(member) for "User#Tag" or member.id if DB stores ID
+
+    message_parts = []
+    role_assignment_needed = False
+
+    if db_result is True:
+        message_parts.append(f"Player `{minecraft_user}` (linked to {member.mention}) successfully added to the database.")
+        role_assignment_needed = True
+    elif db_result is None:
+        message_parts.append(f"Player `{minecraft_user}` (linked to {member.mention}) already exists in the database.")
+        role_assignment_needed = True # Still attempt to assign role to ensure consistency
+    elif db_result is False:
+        message_parts.append(f"Error interacting with the database for player `{minecraft_user}`. Please check the logs.")
+        role_assignment_needed = False # Don't try to assign role if DB failed
+        await ctx.message.remove_reaction('⏳', bot.user)
+        await ctx.message.add_reaction('❌')
+        await ctx.send("\n".join(message_parts))
         return
-    
-    # Add whitelist role
-    try:
-        from const import WHITELIST_ROLE_ID
-        whitelist_role = ctx.guild.get_role(WHITELIST_ROLE_ID)
-        if whitelist_role:
-            await member.add_roles(whitelist_role)
-            await ctx.send(f"Added {member.mention} to the whitelist with Minecraft username {minecraft_user}!")
-        else:
-            await ctx.send(f"Could not find whitelist role. User has been added to the database, but the role was not assigned.")
-    except Exception as e:
-        await ctx.send(f"Error assigning role: {str(e)}. The user has been added to the database but the role was not assigned.")
+    else: # Should not happen if add_player is correctly implemented
+        message_parts.append(f"Unexpected result from database operation for `{minecraft_user}`. Please check the logs.")
+        role_assignment_needed = False
+        await ctx.message.remove_reaction('⏳', bot.user)
+        await ctx.message.add_reaction('⚠️')
+        await ctx.send("\n".join(message_parts))
+        return
+
+    # 5. Add whitelist role (if DB operation was successful or player existed)
+    if role_assignment_needed:
+        try:
+            whitelist_role = ctx.guild.get_role(WHITELIST_ROLE_ID)
+            if not whitelist_role:
+                message_parts.append(f"Error: Whitelist role (ID: {WHITELIST_ROLE_ID}) not found in this server. "
+                                     "Player is in the database but role was not assigned.")
+                await ctx.message.remove_reaction('⏳', bot.user)
+                await ctx.message.add_reaction('⚠️')
+            elif member.get_role(WHITELIST_ROLE_ID): # Check if member already has the role
+                 message_parts.append(f"{member.mention} already has the whitelist role.")
+                 await ctx.message.remove_reaction('⏳', bot.user)
+                 await ctx.message.add_reaction('✅')
+            else:
+                await member.add_roles(whitelist_role, reason=f"Whitelisted by {ctx.author.name}")
+                message_parts.append(f"Successfully assigned the whitelist role to {member.mention}.")
+                await ctx.message.remove_reaction('⏳', bot.user)
+                await ctx.message.add_reaction('✅')
+        except discord.Forbidden:
+            message_parts.append(f"Error: I don't have permission to assign roles. "
+                                 "Player is in the database but role was not assigned.")
+            await ctx.message.remove_reaction('⏳', bot.user)
+            await ctx.message.add_reaction('❌')
+        except discord.HTTPException as e:
+            message_parts.append(f"Error assigning role: An HTTP error occurred: {e}. "
+                                 "Player is in the database but role was not assigned.")
+            await ctx.message.remove_reaction('⏳', bot.user)
+            await ctx.message.add_reaction('❌')
+        except Exception as e:
+            message_parts.append(f"An unexpected error occurred while assigning the role: {str(e)}. "
+                                 "Player is in the database but role was not assigned.")
+            await ctx.message.remove_reaction('⏳', bot.user)
+            await ctx.message.add_reaction('❌')
+    else: # Should only be reached if db_result was False, already handled by return.
+          # For safety, ensure a reaction if logic path is unusual.
+        if '⏳' in [r.emoji for r in ctx.message.reactions if r.me]:
+            await ctx.message.remove_reaction('⏳', bot.user)
+            await ctx.message.add_reaction('❓') # Unclear state
+
+    # Send the combined message
+    await ctx.send("\n".join(message_parts))
