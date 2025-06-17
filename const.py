@@ -39,24 +39,22 @@ ROLES.append(LEAST_PLAYTIME_ROLE)
 MINECRAFT_TO_DISCORD = {
     "LuigiTime34": "luigi_is_better",
     "_gingercat_": "sblujay",
-    "KerDreigerTiger": ".kaiserleopold",
+    "DerKriegerTiger": ".kaiserleopold",
     "Block_Builder": "kazzpyr",
-    "AmbiguouSaurus": "bobbilby",
-    "wwffd": "wizardcat1000",
     "BurgersAreYumYum": "ih8tk",
     "Dinnerbone5117": "salmon5117_73205",
     "Frogloverender": "frogloverender",
     "Sweatshirtboi16": "sweatshirtboi16",
     "MindJames": "mindjames_93738",
     "therealgoos": "therealgoos",
-    "BigSharkyBRo": "car248.",
     "brandonslay": "ctslayer.",
-    "ItzT1g3r": "greattigergaming",
     "The_Rock_Gaming": "the_rock_gaming",
     "THERYZEN7": "asillygooberguy",
     "SpleefTrappedLOL": "neoptolemus_",
     "Yo2JBear": "Yo2JBear#5008",
     "goofy_goblin": "goofy_goblin#8057",
+    "KrazyKai20": "krazykai20",
+    "JefBezosgardner": "jetfisher"
 }
 
 # Special characters for detecting death and advancement messages
